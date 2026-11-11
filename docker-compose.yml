@@ -1,0 +1,27 @@
+services:
+  mail:
+    image: ghcr.io/jbkunama1/highfishmailsend:latest
+    restart: unless-stopped
+    ports:
+      - '${BIND_ADDRESS:-127.0.0.1}:${APP_PORT:-8095}:8000'
+    environment:
+      MCP_TOKEN: ${MCP_TOKEN:?Set a random token of at least 32 characters}
+      MAIL_FROM: ${MAIL_FROM:?Set sender email}
+      MAIL_TO: ${MAIL_TO:?Set default recipient email}
+      MAIL_ALLOWED_TO: ${MAIL_ALLOWED_TO:-}
+      DRY_RUN: ${DRY_RUN:-true}
+      MAIL_TRANSPORT: ${MAIL_TRANSPORT:-smtp}
+      SMTP_HOST: ${SMTP_HOST:-smtp.mailersend.net}
+      SMTP_PORT: ${SMTP_PORT:-587}
+      SMTP_USERNAME: ${SMTP_USERNAME:-}
+      SMTP_PASSWORD: ${SMTP_PASSWORD:-}
+      MAILERSEND_API_TOKEN: ${MAILERSEND_API_TOKEN:-}
+      MCP_ALLOWED_HOSTS: ${MCP_ALLOWED_HOSTS:-localhost:*,127.0.0.1:*}
+      MCP_ALLOWED_ORIGINS: ${MCP_ALLOWED_ORIGINS:-http://localhost:*,http://127.0.0.1:*}
+    read_only: true
+    tmpfs:
+      - /tmp
+    cap_drop:
+      - ALL
+    security_opt:
+      - no-new-privileges:true
