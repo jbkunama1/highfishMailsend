@@ -1,0 +1,20 @@
+<!doctype html>
+<html lang="de"><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>highfishMailsend Admin</title>
+<style>body{font:16px system-ui;background:#101827;color:#edf3ff;margin:auto;max-width:1000px;padding:24px}section{background:#1c2940;padding:24px;border-radius:16px;margin:18px 0}input,textarea,button{box-sizing:border-box;font:inherit;border-radius:8px;padding:12px;border:1px solid #61728f}input,textarea{display:block;width:100%;margin:8px 0 16px;background:#101827;color:white}button{background:#62d6c8;color:#10202b;cursor:pointer;margin:5px}button:disabled{opacity:.4;cursor:not-allowed}pre{white-space:pre-wrap;overflow-wrap:anywhere}small{color:#bdcce4}.row{display:flex;gap:10px;flex-wrap:wrap}</style>
+<h1>highfishMailsend</h1><p>Administration, Status und Mailversand</p>
+<section><label for="key">MCP-/Admin-Key</label><input id="key" type="password" autocomplete="off" placeholder="MCP_TOKEN"><div class="row"><button id="login">Verbinden / Aktualisieren</button><button id="logout">Abmelden</button></div><small>Der Key bleibt nur im Speicher dieser Seite. HTTP bietet keine Transportverschluesselung.</small></section>
+<section><h2>Status und Konfiguration</h2><pre id="status">Noch nicht verbunden.</pre><button id="dry">Testmodus einschalten</button><p><small>Zugangsdaten und Live-Modus werden in Portainer verwaltet. Keine Passwoerter werden angezeigt.</small></p></section>
+<section><h2>Mail erstellen</h2><label for="to">Empfaenger (leer = Standard)</label><input id="to" type="email"><label for="subject">Betreff</label><input id="subject" maxlength="200"><label for="text">Mailtext</label><textarea id="text" rows="8" maxlength="100000"></textarea><button id="preview">Vorschau erstellen</button><pre id="draft"></pre><button id="send" disabled>Vorschau bestaetigen und senden</button><pre id="result" role="status"></pre></section>
+<script>
+let token='',draftId=null;const el=id=>document.getElementById(id);
+async function api(action,data){if(!token)throw Error('Zuerst verbinden');const r=await fetch('/admin/api/'+action,{method:data===undefined?'GET':'POST',headers:{Authorization:'Bearer '+token,'Content-Type':'application/json'},body:data===undefined?undefined:JSON.stringify(data),cache:'no-store'});const j=await r.json();if(!r.ok)throw Error(j.error||'Anfrage fehlgeschlagen');return j}
+function invalidate(){draftId=null;el('send').disabled=true;el('draft').textContent=''}
+function showStatus(j){el('status').textContent=JSON.stringify(j,null,2)}
+async function run(fn){try{await fn()}catch(e){el('result').textContent=e.message}}
+el('login').onclick=()=>run(async()=>{token=el('key').value;el('key').value='';invalidate();showStatus(await api('status'));el('result').textContent='Verbunden.'});
+el('logout').onclick=()=>{token='';el('key').value='';invalidate();el('status').textContent='Abgemeldet';el('result').textContent='';el('text').value='';el('subject').value='';el('to').value=''};
+el('dry').onclick=()=>run(async()=>{if(confirm('Testmodus fuer MCP, Web und Telegram bis zum Neustart einschalten?')){showStatus(await api('dryrun',{}));invalidate()}});
+for(const id of ['to','subject','text'])el(id).oninput=invalidate;
+el('preview').onclick=()=>run(async()=>{invalidate();const j=await api('preview',{to:el('to').value,subject:el('subject').value,text:el('text').value});draftId=j.id;el('draft').textContent=(j.dry_run?'TESTMODUS: kein Versand':'LIVE: echter Versand')+'\nAn: '+j.to+'\nBetreff: '+j.subject+'\n\n'+j.text;el('send').disabled=false});
+el('send').onclick=()=>run(async()=>{if(!draftId||!confirm('Genau diese Vorschau verarbeiten? Im Live-Modus wird eine echte Mail verschickt.'))return;const id=draftId;draftId=null;el('send').disabled=true;el('result').textContent=JSON.stringify(await api('send',{id}),null,2)});
+</script></html>
