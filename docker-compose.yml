@@ -3,7 +3,7 @@ services:
     image: ghcr.io/jbkunama1/highfishmailsend:latest
     restart: unless-stopped
     ports:
-      - '${BIND_ADDRESS:-127.0.0.1}:${APP_PORT:-8095}:8000'
+      - '${BIND_ADDRESS:-0.0.0.0}:${APP_PORT:-8095}:8000'
     environment:
       MCP_TOKEN: ${MCP_TOKEN:?Set a random token of at least 32 characters}
       MAIL_FROM: ${MAIL_FROM:?Set sender email}
@@ -16,8 +16,10 @@ services:
       SMTP_USERNAME: ${SMTP_USERNAME:-}
       SMTP_PASSWORD: ${SMTP_PASSWORD:-}
       MAILERSEND_API_TOKEN: ${MAILERSEND_API_TOKEN:-}
-      MCP_ALLOWED_HOSTS: ${MCP_ALLOWED_HOSTS:-localhost:*,127.0.0.1:*}
-      MCP_ALLOWED_ORIGINS: ${MCP_ALLOWED_ORIGINS:-http://localhost:*,http://127.0.0.1:*}
+      MCP_ALLOWED_HOSTS: ${MCP_ALLOWED_HOSTS:?Set allowed server IP or hostname with external port e.g. 192.168.1.10:8095}
+      MCP_ALLOWED_ORIGINS: ${MCP_ALLOWED_ORIGINS:-}
+      TELEGRAM_BOT_TOKEN: ${TELEGRAM_BOT_TOKEN:-}
+      TELEGRAM_ALLOWED_USER_IDS: ${TELEGRAM_ALLOWED_USER_IDS:-}
     read_only: true
     tmpfs:
       - /tmp
