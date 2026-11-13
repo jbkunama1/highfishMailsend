@@ -2,6 +2,8 @@ services:
   mail:
     image: ghcr.io/jbkunama1/highfishmailsend:latest
     restart: unless-stopped
+    networks:
+      - highfishNetwork
     ports:
       - '${BIND_ADDRESS:-0.0.0.0}:${APP_PORT:-8095}:8000'
     environment:
@@ -28,3 +30,8 @@ services:
       - ALL
     security_opt:
       - no-new-privileges:true
+
+networks:
+  highfishNetwork:
+    external: true
+    name: highfishNetwork
