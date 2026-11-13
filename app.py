@@ -5,7 +5,6 @@ import re
 import smtplib
 import ssl
 from email.message import EmailMessage
-
 import httpx
 import uvicorn
 from email_validator import validate_email
@@ -28,20 +27,22 @@ SENDER_DOMAIN = FROM.rsplit('@', 1)[1]
 TO = address(os.environ['MAIL_TO'])
 ALLOWED = {address(x).lower() for x in setting_list('MAIL_ALLOWED_TO', '')} or {TO.lower()}
 MODE = os.getenv('MAIL_TRANSPORT', 'smtp')
-if MODE not in {'smtp', 'api'}:
-    raise ValueError('MAIL_TRANSPORT must be smtp or api')
+CREDENTIALS = {'smtp': ['SMTP_USERNAME', 'SMTP_PASSWORD'], 'api': ['MAILERSEND_API_TOKEN'], 'cyberpanel': ['CYBERPANEL_API_KEY']}
+if MODE not in CREDENTIALS:
+    raise ValueError('MAIL_TRANSPORT must be smtp, api (MailerSend), or cyberpanel')
 DRY = os.getenv('DRY_RUN', 'true').lower()
 if DRY not in {'true', 'false'}:
     raise ValueError('DRY_RUN must be true or false')
 DRY = DRY == 'true'
 if not DRY:
-    for key in (['SMTP_USERNAME', 'SMTP_PASSWORD'] if MODE == 'smtp' else ['MAILERSEND_API_TOKEN']):
+    for key in CREDENTIALS[MODE]:
         if not os.getenv(key):
             raise ValueError('Missing ' + key)
 HOST = os.getenv('SMTP_HOST', 'smtp.mailersend.net')
 PORT = int(os.getenv('SMTP_PORT', '587'))
 if not 1 <= PORT <= 65535:
     raise ValueError('Invalid SMTP_PORT')
+CYBERPANEL_SEND_URL = 'https://platform.cyberpersons.com/email/v1/send'
 
 def resolve_sender(sender=''):
     if not isinstance(sender, str):
@@ -73,9 +74,21 @@ def smtp_send(recipient, subject, text, sender=''):
         client.login(os.environ['SMTP_USERNAME'], os.environ['SMTP_PASSWORD'])
         client.send_message(message)
 
+async def cyberpanel_send(sender_address, recipient, subject, text):
+    async with httpx.AsyncClient(timeout=20, follow_redirects=False) as client:
+        response = await client.post(CYBERPANEL_SEND_URL,
+            headers={'Authorization': 'Bearer ' + os.environ['CYBERPANEL_API_KEY']},
+            json={'from': sender_address, 'to': recipient, 'subject': subject, 'text': text})
+        response.raise_for_status()
+        data = response.json()
+        if response.status_code != 202 or not isinstance(data, dict) or data.get('success') is not True or not isinstance(data.get('data'), dict):
+            raise ValueError('Unexpected CyberPanel response; check provider before retrying')
+        message_id = data['data'].get('message_id')
+        return message_id if isinstance(message_id, str) and len(message_id) <= 512 else None
+
 @mcp.tool()
 async def send_mail(subject: str, text: str, to: str = '', sender: str = '') -> dict:
-    '''Send plain text email. sender is only the name BEFORE @; the domain is fixed by MAIL_FROM. Empty sender uses MAIL_FROM. Obtain user approval for full sender, recipient, subject and body before calling. DRY_RUN never sends.'''
+    '''Send plain text email. sender is only the name BEFORE @; domain fixed by MAIL_FROM. Empty sender uses MAIL_FROM. Obtain approval for full sender, recipient, subject and body. DRY_RUN never sends. Transport is configured server-side.'''
     sender_address = resolve_sender(sender)
     recipient = address(to) if to else TO
     if recipient.lower() not in ALLOWED:
@@ -86,18 +99,26 @@ async def send_mail(subject: str, text: str, to: str = '', sender: str = '') -> 
         raise ValueError('Body must contain 1 to 100000 characters')
     if DRY:
         return {'status': 'dry_run', 'sent': False, 'from': sender_address, 'to': recipient, 'subject': subject, 'text': text}
+    message_id = None
     try:
         if MODE == 'smtp':
             await asyncio.to_thread(smtp_send, recipient, subject, text, sender)
-        else:
+        elif MODE == 'cyberpanel':
+            message_id = await cyberpanel_send(sender_address, recipient, subject, text)
+        elif MODE == 'api':
             async with httpx.AsyncClient(timeout=20) as client:
                 response = await client.post('https://api.mailersend.com/v1/email',
                     headers={'Authorization': 'Bearer ' + os.environ['MAILERSEND_API_TOKEN']},
                     json={'from': {'email': sender_address}, 'to': [{'email': recipient}], 'subject': subject, 'text': text})
                 response.raise_for_status()
+        else:
+            raise ValueError('Unknown transport')
     except Exception:
         return {'status': 'error', 'sent': None, 'message': 'Delivery failed or outcome uncertain. Check provider before retrying.'}
-    return {'status': 'accepted', 'from': sender_address, 'to': recipient, 'message': 'Provider accepted message; inbox delivery not guaranteed.'}
+    result = {'status': 'accepted', 'from': sender_address, 'to': recipient, 'message': 'Provider accepted message; inbox delivery not guaranteed.'}
+    if message_id:
+        result['message_id'] = message_id
+    return result
 
 inner = mcp.streamable_http_app()
 
