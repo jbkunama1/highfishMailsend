@@ -8,6 +8,8 @@ services:
       - '${BIND_ADDRESS:-0.0.0.0}:${APP_PORT:-8095}:8000'
     environment:
       MCP_TOKEN: ${MCP_TOKEN:?Set a random token of at least 32 characters}
+      WEB_ADMIN_USERNAME: ${WEB_ADMIN_USERNAME:-admin}
+      WEB_ADMIN_PASSWORD: ${WEB_ADMIN_PASSWORD:-}
       MAIL_FROM: ${MAIL_FROM:?Set sender email}
       MAIL_TO: ${MAIL_TO:-}
       MAIL_ALLOWED_TO: ${MAIL_ALLOWED_TO:-}
