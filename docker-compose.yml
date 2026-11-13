@@ -9,7 +9,7 @@ services:
     environment:
       MCP_TOKEN: ${MCP_TOKEN:?Set a random token of at least 32 characters}
       MAIL_FROM: ${MAIL_FROM:?Set sender email}
-      MAIL_TO: ${MAIL_TO:?Set default recipient email}
+      MAIL_TO: ${MAIL_TO:-}
       MAIL_ALLOWED_TO: ${MAIL_ALLOWED_TO:-}
       DRY_RUN: ${DRY_RUN:-true}
       MAIL_TRANSPORT: ${MAIL_TRANSPORT:-smtp}

@@ -12,7 +12,7 @@ from mcp.server.fastmcp import FastMCP
 from mcp.server.transport_security import TransportSecuritySettings
 
 def address(value):
-    if '\r' in value or '\n' in value:
+    if not isinstance(value, str) or '\r' in value or '\n' in value:
         raise ValueError('Invalid email address')
     return validate_email(value, check_deliverability=False).normalized
 
@@ -24,8 +24,18 @@ if len(TOKEN) < 32 or not TOKEN.isascii():
     raise ValueError('MCP_TOKEN must contain at least 32 random ASCII characters')
 FROM = address(os.environ['MAIL_FROM'])
 SENDER_DOMAIN = FROM.rsplit('@', 1)[1]
-TO = address(os.environ['MAIL_TO'])
-ALLOWED = {address(x).lower() for x in setting_list('MAIL_ALLOWED_TO', '')} or {TO.lower()}
+# Legacy placeholder only; never validate or use as a delivery fallback.
+TO = os.getenv('MAIL_TO', '')
+ALLOWED = {address(x).lower() for x in setting_list('MAIL_ALLOWED_TO', '')}
+
+def resolve_recipient(to):
+    if not isinstance(to, str) or not to.strip():
+        raise ValueError('An explicit to email address is required for each call')
+    recipient = address(to)
+    if ALLOWED and recipient.lower() not in ALLOWED:
+        raise ValueError('Recipient not allowed')
+    return recipient
+
 MODE = os.getenv('MAIL_TRANSPORT', 'smtp')
 INITIAL_MODE = MODE
 CREDENTIALS = {'smtp': ['SMTP_USERNAME', 'SMTP_PASSWORD'], 'api': ['MAILERSEND_API_TOKEN'], 'cyberpanel': ['CYBERPANEL_API_KEY']}
@@ -103,13 +113,11 @@ async def cyberpanel_send(sender_address, recipient, subject, text):
         return message_id if isinstance(message_id, str) and len(message_id) <= 512 else None
 
 @mcp.tool()
-async def send_mail(subject: str, text: str, to: str = '', sender: str = '', transport: str = '') -> dict:
-    '''Send plain text email. sender is only the name BEFORE @; domain fixed by MAIL_FROM. transport is smtp or cyberpanel (legacy api means MailerSend); empty uses current global default. Obtain approval for transport, full sender, recipient, subject and body. DRY_RUN never sends. This call does not change the global default.'''
+async def send_mail(subject: str, text: str, to: str, sender: str = '', transport: str = '') -> dict:
+    '''Send plain text email to the required explicit to address. MAIL_TO is an unused legacy placeholder. sender is only the name BEFORE @; domain fixed by MAIL_FROM. transport is smtp or cyberpanel (legacy api means MailerSend); empty uses current global default. Obtain approval for transport, full sender, recipient, subject and body. DRY_RUN never sends. This call does not change the global default.'''
+    recipient = resolve_recipient(to)
     selected = select_transport(transport)
     sender_address = resolve_sender(sender)
-    recipient = address(to) if to else TO
-    if recipient.lower() not in ALLOWED:
-        raise ValueError('Recipient not allowed')
     if not subject.strip() or len(subject) > 200 or '\r' in subject or '\n' in subject:
         raise ValueError('Invalid subject')
     if not text.strip() or len(text) > 100000:

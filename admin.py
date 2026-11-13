@@ -13,17 +13,17 @@ DRAFTS = {}
 TELEGRAM = {'state': 'disabled'}
 
 def status():
-    return {'project': 'highfishMailsend', 'uptime_seconds': int(time.monotonic() - START), 'dry_run': mail.DRY, 'transport': mail.MODE, 'startup_transport': mail.INITIAL_MODE, 'default_scope': 'global until restart; existing drafts unchanged', 'from': mail.FROM, 'sender_domain': mail.SENDER_DOMAIN, 'default_to': mail.TO, 'allowed_to': sorted(mail.ALLOWED), 'smtp_host': mail.HOST, 'smtp_port': mail.PORT, 'smtp_username_configured': bool(os.getenv('SMTP_USERNAME')), 'smtp_password_configured': bool(os.getenv('SMTP_PASSWORD')), 'api_token_configured': bool(os.getenv('MAILERSEND_API_TOKEN')), 'cyberpanel_key_configured': bool(os.getenv('CYBERPANEL_API_KEY')), 'telegram': dict(TELEGRAM)}
+    return {'project': 'highfishMailsend', 'uptime_seconds': int(time.monotonic() - START), 'dry_run': mail.DRY, 'transport': mail.MODE, 'startup_transport': mail.INITIAL_MODE, 'default_scope': 'global until restart; existing drafts unchanged', 'from': mail.FROM, 'sender_domain': mail.SENDER_DOMAIN, 'default_to': '', 'mail_to_placeholder': mail.TO, 'recipient_required': True, 'allowed_to': sorted(mail.ALLOWED), 'smtp_host': mail.HOST, 'smtp_port': mail.PORT, 'smtp_username_configured': bool(os.getenv('SMTP_USERNAME')), 'smtp_password_configured': bool(os.getenv('SMTP_PASSWORD')), 'api_token_configured': bool(os.getenv('MAILERSEND_API_TOKEN')), 'cyberpanel_key_configured': bool(os.getenv('CYBERPANEL_API_KEY')), 'telegram': dict(TELEGRAM)}
 
 def draft(subject, text, to='', sender='', transport=''):
     if not all(isinstance(x, str) for x in (subject, text, to, sender, transport)):
         raise ValueError('Textfelder erforderlich')
+    recipient = mail.resolve_recipient(to)
     mail.resolve_sender(sender)
     selected = mail.select_transport(transport)
     if not mail.DRY and any(not os.getenv(key) for key in mail.CREDENTIALS[selected]):
         raise ValueError('Zugangsdaten fehlen')
-    recipient = mail.address(to) if to else mail.TO
-    if recipient.lower() not in mail.ALLOWED or not subject.strip() or len(subject) > 200 or '\r' in subject or '\n' in subject or not text.strip() or len(text) > 100000:
+    if not subject.strip() or len(subject) > 200 or '\r' in subject or '\n' in subject or not text.strip() or len(text) > 100000:
         raise ValueError('Empfaenger, Betreff oder Text ungueltig')
     return {'subject': subject, 'text': text, 'to': recipient, 'sender': sender, 'transport': selected}
 
