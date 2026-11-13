@@ -27,9 +27,10 @@ SENDER_DOMAIN = FROM.rsplit('@', 1)[1]
 TO = address(os.environ['MAIL_TO'])
 ALLOWED = {address(x).lower() for x in setting_list('MAIL_ALLOWED_TO', '')} or {TO.lower()}
 MODE = os.getenv('MAIL_TRANSPORT', 'smtp')
+INITIAL_MODE = MODE
 CREDENTIALS = {'smtp': ['SMTP_USERNAME', 'SMTP_PASSWORD'], 'api': ['MAILERSEND_API_TOKEN'], 'cyberpanel': ['CYBERPANEL_API_KEY']}
 if MODE not in CREDENTIALS:
-    raise ValueError('MAIL_TRANSPORT must be smtp, api (MailerSend), or cyberpanel')
+    raise ValueError('MAIL_TRANSPORT must be smtp, api or cyberpanel')
 DRY = os.getenv('DRY_RUN', 'true').lower()
 if DRY not in {'true', 'false'}:
     raise ValueError('DRY_RUN must be true or false')
@@ -43,6 +44,23 @@ PORT = int(os.getenv('SMTP_PORT', '587'))
 if not 1 <= PORT <= 65535:
     raise ValueError('Invalid SMTP_PORT')
 CYBERPANEL_SEND_URL = 'https://platform.cyberpersons.com/email/v1/send'
+
+def select_transport(transport=''):
+    if not isinstance(transport, str):
+        raise ValueError('Transport must be a string')
+    selected = transport or MODE
+    if selected not in CREDENTIALS:
+        raise ValueError('Unknown transport')
+    return selected
+
+def set_default_transport(transport):
+    global MODE
+    if transport not in ('smtp', 'cyberpanel'):
+        raise ValueError('Choose smtp or cyberpanel')
+    if not DRY and any(not os.getenv(key) for key in CREDENTIALS[transport]):
+        raise ValueError('Transport credentials missing')
+    MODE = transport
+    return MODE
 
 def resolve_sender(sender=''):
     if not isinstance(sender, str):
@@ -76,9 +94,7 @@ def smtp_send(recipient, subject, text, sender=''):
 
 async def cyberpanel_send(sender_address, recipient, subject, text):
     async with httpx.AsyncClient(timeout=20, follow_redirects=False) as client:
-        response = await client.post(CYBERPANEL_SEND_URL,
-            headers={'Authorization': 'Bearer ' + os.environ['CYBERPANEL_API_KEY']},
-            json={'from': sender_address, 'to': recipient, 'subject': subject, 'text': text})
+        response = await client.post(CYBERPANEL_SEND_URL, headers={'Authorization': 'Bearer ' + os.environ['CYBERPANEL_API_KEY']}, json={'from': sender_address, 'to': recipient, 'subject': subject, 'text': text})
         response.raise_for_status()
         data = response.json()
         if response.status_code != 202 or not isinstance(data, dict) or data.get('success') is not True or not isinstance(data.get('data'), dict):
@@ -87,8 +103,9 @@ async def cyberpanel_send(sender_address, recipient, subject, text):
         return message_id if isinstance(message_id, str) and len(message_id) <= 512 else None
 
 @mcp.tool()
-async def send_mail(subject: str, text: str, to: str = '', sender: str = '') -> dict:
-    '''Send plain text email. sender is only the name BEFORE @; domain fixed by MAIL_FROM. Empty sender uses MAIL_FROM. Obtain approval for full sender, recipient, subject and body. DRY_RUN never sends. Transport is configured server-side.'''
+async def send_mail(subject: str, text: str, to: str = '', sender: str = '', transport: str = '') -> dict:
+    '''Send plain text email. sender is only the name BEFORE @; domain fixed by MAIL_FROM. transport is smtp or cyberpanel (legacy api means MailerSend); empty uses current global default. Obtain approval for transport, full sender, recipient, subject and body. DRY_RUN never sends. This call does not change the global default.'''
+    selected = select_transport(transport)
     sender_address = resolve_sender(sender)
     recipient = address(to) if to else TO
     if recipient.lower() not in ALLOWED:
@@ -98,30 +115,25 @@ async def send_mail(subject: str, text: str, to: str = '', sender: str = '') -> 
     if not text.strip() or len(text) > 100000:
         raise ValueError('Body must contain 1 to 100000 characters')
     if DRY:
-        return {'status': 'dry_run', 'sent': False, 'from': sender_address, 'to': recipient, 'subject': subject, 'text': text}
+        return {'status': 'dry_run', 'sent': False, 'transport': selected, 'from': sender_address, 'to': recipient, 'subject': subject, 'text': text}
     message_id = None
     try:
-        if MODE == 'smtp':
+        if selected == 'smtp':
             await asyncio.to_thread(smtp_send, recipient, subject, text, sender)
-        elif MODE == 'cyberpanel':
+        elif selected == 'cyberpanel':
             message_id = await cyberpanel_send(sender_address, recipient, subject, text)
-        elif MODE == 'api':
-            async with httpx.AsyncClient(timeout=20) as client:
-                response = await client.post('https://api.mailersend.com/v1/email',
-                    headers={'Authorization': 'Bearer ' + os.environ['MAILERSEND_API_TOKEN']},
-                    json={'from': {'email': sender_address}, 'to': [{'email': recipient}], 'subject': subject, 'text': text})
-                response.raise_for_status()
         else:
-            raise ValueError('Unknown transport')
+            async with httpx.AsyncClient(timeout=20) as client:
+                response = await client.post('https://api.mailersend.com/v1/email', headers={'Authorization': 'Bearer ' + os.environ['MAILERSEND_API_TOKEN']}, json={'from': {'email': sender_address}, 'to': [{'email': recipient}], 'subject': subject, 'text': text})
+                response.raise_for_status()
     except Exception:
-        return {'status': 'error', 'sent': None, 'message': 'Delivery failed or outcome uncertain. Check provider before retrying.'}
-    result = {'status': 'accepted', 'from': sender_address, 'to': recipient, 'message': 'Provider accepted message; inbox delivery not guaranteed.'}
+        return {'status': 'error', 'sent': None, 'transport': selected, 'message': 'Delivery failed or outcome uncertain. Check provider before retrying.'}
+    result = {'status': 'accepted', 'transport': selected, 'from': sender_address, 'to': recipient, 'message': 'Provider accepted message; inbox delivery not guaranteed.'}
     if message_id:
         result['message_id'] = message_id
     return result
 
 inner = mcp.streamable_http_app()
-
 async def app(scope, receive, send):
     if scope['type'] != 'http':
         return await inner(scope, receive, send)
@@ -136,6 +148,5 @@ async def app(scope, receive, send):
         headers.append((b'www-authenticate', b'Bearer'))
     await send({'type': 'http.response.start', 'status': status, 'headers': headers})
     await send({'type': 'http.response.body', 'body': body})
-
 if __name__ == '__main__':
     uvicorn.run(app, host='0.0.0.0', port=8000, access_log=False)

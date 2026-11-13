@@ -8,22 +8,24 @@ from starlette.applications import Starlette
 from starlette.responses import HTMLResponse, JSONResponse
 from starlette.routing import Route
 import app as mail
-
 START = time.monotonic()
 DRAFTS = {}
 TELEGRAM = {'state': 'disabled'}
 
 def status():
-    return {'project': 'highfishMailsend', 'uptime_seconds': int(time.monotonic() - START), 'dry_run': mail.DRY, 'transport': mail.MODE, 'from': mail.FROM, 'sender_domain': mail.SENDER_DOMAIN, 'default_to': mail.TO, 'allowed_to': sorted(mail.ALLOWED), 'smtp_host': mail.HOST, 'smtp_port': mail.PORT, 'smtp_username_configured': bool(os.getenv('SMTP_USERNAME')), 'smtp_password_configured': bool(os.getenv('SMTP_PASSWORD')), 'api_token_configured': bool(os.getenv('MAILERSEND_API_TOKEN')), 'telegram': dict(TELEGRAM)}
+    return {'project': 'highfishMailsend', 'uptime_seconds': int(time.monotonic() - START), 'dry_run': mail.DRY, 'transport': mail.MODE, 'startup_transport': mail.INITIAL_MODE, 'default_scope': 'global until restart; existing drafts unchanged', 'from': mail.FROM, 'sender_domain': mail.SENDER_DOMAIN, 'default_to': mail.TO, 'allowed_to': sorted(mail.ALLOWED), 'smtp_host': mail.HOST, 'smtp_port': mail.PORT, 'smtp_username_configured': bool(os.getenv('SMTP_USERNAME')), 'smtp_password_configured': bool(os.getenv('SMTP_PASSWORD')), 'api_token_configured': bool(os.getenv('MAILERSEND_API_TOKEN')), 'cyberpanel_key_configured': bool(os.getenv('CYBERPANEL_API_KEY')), 'telegram': dict(TELEGRAM)}
 
-def draft(subject, text, to='', sender=''):
-    if not all(isinstance(x, str) for x in (subject, text, to, sender)):
+def draft(subject, text, to='', sender='', transport=''):
+    if not all(isinstance(x, str) for x in (subject, text, to, sender, transport)):
         raise ValueError('Textfelder erforderlich')
     mail.resolve_sender(sender)
+    selected = mail.select_transport(transport)
+    if not mail.DRY and any(not os.getenv(key) for key in mail.CREDENTIALS[selected]):
+        raise ValueError('Zugangsdaten fehlen')
     recipient = mail.address(to) if to else mail.TO
     if recipient.lower() not in mail.ALLOWED or not subject.strip() or len(subject) > 200 or '\r' in subject or '\n' in subject or not text.strip() or len(text) > 100000:
         raise ValueError('Empfaenger, Betreff oder Text ungueltig')
-    return {'subject': subject, 'text': text, 'to': recipient, 'sender': sender}
+    return {'subject': subject, 'text': text, 'to': recipient, 'sender': sender, 'transport': selected}
 
 async def page(request):
     return HTMLResponse(Path(__file__).with_name('admin.html').read_text(), headers={'Cache-Control': 'no-store', 'X-Frame-Options': 'DENY', 'Content-Security-Policy': "default-src 'self'; script-src 'unsafe-inline'; style-src 'unsafe-inline'; connect-src 'self'; frame-ancestors 'none'; base-uri 'none'; form-action 'none'"})
@@ -50,8 +52,13 @@ async def api(request):
             mail.DRY = True
             DRAFTS.clear()
             return JSONResponse(status(), headers=headers)
+        if action == 'default':
+            if data.get('confirm') is not True or not isinstance(data.get('transport'), str):
+                raise ValueError('Bestaetigung erforderlich')
+            mail.set_default_transport(data['transport'])
+            return JSONResponse(status(), headers=headers)
         if action == 'preview':
-            item = draft(data.get('subject', ''), data.get('text', ''), data.get('to', ''), data.get('sender', ''))
+            item = draft(data.get('subject', ''), data.get('text', ''), data.get('to', ''), data.get('sender', ''), data.get('transport', ''))
             now = time.monotonic()
             for key in list(DRAFTS):
                 if DRAFTS[key][0] < now:
@@ -67,10 +74,9 @@ async def api(request):
                 raise ValueError('Ungueltiger Entwurf')
             item = DRAFTS.pop(key, None)
             if not item or item[0] < time.monotonic() or item[2] != mail.DRY:
-                raise ValueError('Entwurf abgelaufen oder Modus geaendert')
+                raise ValueError('Entwurf abgelaufen oder Testmodus geaendert')
             return JSONResponse(await mail.send_mail(**item[1]), headers=headers)
         raise ValueError('Unbekannte Aktion')
     except (ValueError, TypeError):
-        return JSONResponse({'error': 'Ungueltige Eingabe oder abgelaufener Entwurf'}, status_code=400, headers=headers)
-
+        return JSONResponse({'error': 'Ungueltige Eingabe, fehlende Zugangsdaten oder abgelaufener Entwurf'}, status_code=400, headers=headers)
 application = Starlette(routes=[Route('/', page), Route('/api/status', api), Route('/api/{action}', api, methods=['POST'])])
