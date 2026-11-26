@@ -113,8 +113,12 @@ async def cyberpanel_send(sender_address, recipient, subject, text):
         return message_id if isinstance(message_id, str) and len(message_id) <= 512 else None
 
 @mcp.tool()
-async def send_mail(subject: str, text: str, to: str, sender: str = '', transport: str = '') -> dict:
-    '''Send plain text email to the required explicit to address. MAIL_TO is an unused legacy placeholder. sender is only the name BEFORE @; domain fixed by MAIL_FROM. transport is smtp or cyberpanel (legacy api means MailerSend); empty uses current global default. Obtain approval for transport, full sender, recipient, subject and body. DRY_RUN never sends. This call does not change the global default.'''
+async def send_mail(subject: str, text: str, to: str, sender: str = '', transport: str = '', provider: str = '', provider_revision: int = -1) -> dict:
+    '''Send plain text email to the required explicit to address. MAIL_TO is an unused legacy placeholder. sender is only the name BEFORE @; domain fixed by MAIL_FROM. transport is smtp or cyberpanel (legacy api means MailerSend); empty uses current global default. Obtain approval for transport, full sender, recipient, subject and body. DRY_RUN never sends. provider optionally selects a named profile by ID; transport must match if both are given. With neither, use the persistent provider default if configured. provider_revision is internal to confirmed web previews; omit it for normal MCP calls. This call does not change the global default.'''
+    if provider or (not transport and os.getenv('PROVIDER_ENCRYPTION_KEY')):
+        import sys
+        from provider_mail import send as profile_send
+        return await profile_send(sys.modules[__name__], subject, text, to, sender, transport, provider, provider_revision)
     recipient = resolve_recipient(to)
     selected = select_transport(transport)
     sender_address = resolve_sender(sender)

@@ -25,6 +25,11 @@ services:
       MCP_ALLOWED_ORIGINS: ${MCP_ALLOWED_ORIGINS:-}
       TELEGRAM_BOT_TOKEN: ${TELEGRAM_BOT_TOKEN:-}
       TELEGRAM_ALLOWED_USER_IDS: ${TELEGRAM_ALLOWED_USER_IDS:-}
+      PROVIDER_ENCRYPTION_KEY: ${PROVIDER_ENCRYPTION_KEY:-}
+      PROVIDER_DB_PATH: /data/providers.sqlite3
+      SMTP_TRUSTED_PRIVATE_HOSTS: ${SMTP_TRUSTED_PRIVATE_HOSTS:-}
+    volumes:
+      - provider-data:/data
     read_only: true
     tmpfs:
       - /tmp
@@ -37,3 +42,6 @@ networks:
   highfishNetwork:
     external: true
     name: highfishNetwork
+
+volumes:
+  provider-data:

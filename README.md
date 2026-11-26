@@ -1,91 +1,68 @@
 # highfishMailsend
 
-MCP-Maildienst, Web-Adminpanel und Telegram-Adminbot in einem Docker-Container. Selbst implementiert. Kein eigener KI-Server: ein externer MCP-Client formuliert Mails und ruft send_mail auf. Web und Telegram verwenden unveraendert eingegebenen Betreff und Plaintext. Keine Anhaenge.
+MCP-Maildienst mit separater Webverwaltung und optionaler Telegram-Administration. Mehrere Profile für SMTP, MailerSend API und CyberPanel Email API. Übersicht der Dokumentation: [INDEX.md](INDEX.md).
 
-## Funktionen
+## Weboberfläche und Zugänge
 
-| Zugang | Funktionen |
-|---|---|
-| MCP /mcp | send_mail(subject, text, to optional), Bearer-Key |
-| Web /admin/ | Key-Anmeldung, Status, Konfiguration ohne Passwoerter, Entwurf/Vorschau, bestaetigter Versand, Testmodus einschalten |
-| Telegram | Private Chats mit Benutzer-Allowlist, Inline-Adminmenue, Status/Konfiguration, Mailentwurf und Sendecode, Testmodus einschalten |
+Unter `/admin/`: Übersicht, Mail schreiben und Anbieter. Profile anlegen, bearbeiten, aktivieren/deaktivieren und ausdrücklich als Standard setzen. Bestehende ENV-Zugangsdaten bleiben als unveränderliche eingebaute Profile erhalten. Statusaktualisierung verändert keinen Mailtext.
 
-Alle drei Zugaenge teilen Mailversand, Empfaenger-Allowlist und Dry-run-Modus. Adminpanel bietet noch keine Bearbeitung von SMTP-Zugangsdaten, keine Containersteuerung und keinen Logbrowser. Zugangsdaten und Live-Modus bleiben in Portainer. Ein per Admin eingeschalteter Testmodus gilt nur bis zum Neustart; dann gilt wieder DRY_RUN aus der Umgebung.
+Weblogin mit `WEB_ADMIN_USERNAME` (Standard `admin`) und separatem `WEB_ADMIN_PASSWORD` mit mindestens 16 Zeichen, verschieden von `MCP_TOKEN`. MCP unter `/mcp` mit `Authorization: Bearer MCP_TOKEN`, mindestens 32 zufällige ASCII-Zeichen; kein OAuth. Der MCP-Client muss den konkreten Versand freigeben, das MCP-Tool selbst bietet keinen zweiten Bestätigungsdialog. HTTP ist unverschlüsselt: vertrauenswürdiges LAN/VPN oder korrekt eingerichtetes HTTPS verwenden.
 
-## Build und Portainer
+## Versandregeln
 
-GitHub Actions: erst automatisierte Tests, danach Multiarch-Build fuer linux/amd64 und linux/arm64. Push auf main veroeffentlicht latest und Commit-SHA unter ghcr.io/jbkunama1/highfishmailsend. Pull Requests bauen ohne Push. Ein oeffentliches Repository garantiert kein oeffentliches GHCR-Paket: Sichtbarkeit pruefen oder GHCR-Zugang in Portainer hinterlegen.
+Jeder Aufruf benötigt ein gültiges explizites `to`; `MAIL_TO` bleibt unbenutzter Legacy-Platzhalter. Eine gesetzte `MAIL_ALLOWED_TO`-Liste gilt immer. Die Absenderdomain bleibt aus `MAIL_FROM` fest; Profile können nur den lokalen Namen vorbelegen. `DRY_RUN=true` verhindert Mail-Submission. Live-Modus kann nicht über die Weboberfläche eingeschaltet werden.
 
-1. Erfolgreichen Build unter GitHub Actions abwarten.
-2. Portainer Git-Stack: https://github.com/jbkunama1/highfishMailsend, main, docker-compose.yml. Der Zielserver zieht nur das Image, kein lokaler Build.
-3. Variablen setzen (Tabelle unten), zuerst DRY_RUN=true.
-4. http://SERVER-IP:8095/admin/ oeffnen und mit MCP_TOKEN anmelden. Eine Vorschau erstellen und im Testmodus verarbeiten.
-5. Telegram optional konfigurieren und /admin senden.
-6. Erst nach Tests DRY_RUN=false in Portainer setzen und Stack neu deployen. Das aktiviert echten Versand fuer alle Zugaenge.
+Das Webformular zeigt Anbieter, vollständigen Absender, Empfänger, Betreff und Text und verlangt eine separate Versandbestätigung. Vorschauen gelten zehn Minuten und einmalig. Profiländerung/Deaktivierung erfordert eine neue Vorschau. Keine automatischen Versand-Retries und kein Anbieter-Fallback. Bei Timeout/unklarem Ergebnis zuerst beim Provider prüfen. Annahme ist keine Zustellgarantie; keine persistente Mailhistorie.
 
-## Konfiguration
+## MCP-Anbieterwahl
 
-| Variable | Bedeutung / Standard |
-|---|---|
-| MCP_TOKEN | Pflicht: zufaelliger geheimer Key mit mindestens 32 ASCII-Zeichen; z.B. openssl rand -hex 32. Gilt fuer MCP und Web-Admin |
-| MAIL_FROM | Pflicht: volle Absenderadresse einer verifizierten MailerSend-Domain |
-| MAIL_TO | Pflicht: Standardempfaenger |
-| MAIL_ALLOWED_TO | Kommagetrennte erlaubte Adressen; leer = nur MAIL_TO |
-| DRY_RUN | true = Vorschau, keine echte Mail; false = echter Versand |
-| MAIL_TRANSPORT | smtp (Standard) oder api |
-| SMTP_HOST / SMTP_PORT | smtp.mailersend.net / 587; verpflichtendes STARTTLS mit Zertifikatspruefung |
-| SMTP_USERNAME / SMTP_PASSWORD | MailerSend-SMTP-Zugangsdaten, kein normaler Account-Login |
-| MAILERSEND_API_TOKEN | Nur bei api: HTTP-API-Token statt SMTP-Benutzer/Passwort |
-| MCP_ALLOWED_HOSTS | Pflicht im Stack: tatsaechliche Server-IP/Hostname mit extern verwendetem Port; mehrere kommagetrennt |
-| MCP_ALLOWED_ORIGINS | Optional: benoetigte Browser-Origins fuer MCP |
-| TELEGRAM_BOT_TOKEN | Optional: Bot-Token, leer = Telegram aus |
-| TELEGRAM_ALLOWED_USER_IDS | Bei Telegram Pflicht: numerische persoenliche Benutzer-IDs, kommagetrennt |
-| BIND_ADDRESS / APP_PORT | 0.0.0.0 / 8095 |
+`send_mail` akzeptiert zusätzlich `provider` als Profil-ID aus der authentifizierten Anbieterliste. Explizites Profil hat Vorrang; zusätzliches `transport` muss passen. Nur `transport` wählt den bisherigen ENV-Transport (`smtp`, `api`, `cyberpanel`). Ohne beide gilt der persistierte Standard, sonst der bisherige ENV-/Laufzeitstandard. `provider_revision` ist intern für Webvorschauen und bei normalen MCP-Aufrufen wegzulassen. Keine MCP-Werkzeuge zur Profiländerung. Bereits begonnene Sendungen werden durch spätere Profiländerungen nicht abgebrochen.
 
-Beispiel fuer direkten LAN-Zugriff: MCP_ALLOWED_HOSTS=192.168.1.10:8095. Bei Portweiterleitung externen Host/Port ebenfalls eintragen. Keine globale Host-Wildcard. Netzwerk-, Router- und Firewallfreigaben werden nicht automatisch eingerichtet. Alte .env.example ggf. anpassen: deren Loopback-Bindung verhindert direkten LAN-Zugriff. Niemals echte Keys/Passwoerter in Git speichern.
+## Speicherung und Portainer-Migration
 
-## Web-Adminpanel
+SQLite auf Volume `provider-data` unter `/data`; Zugangsdaten einschließlich SMTP-Benutzername mit Fernet authentifiziert verschlüsselt. Gespeicherte Secrets werden nicht zurückgegeben. Profilmetadaten sind nicht verschlüsselt. Leere Zugangsdaten beim Bearbeiten behalten die bisherigen Werte.
 
-http://SERVER-IP:8095/admin/ (auch /admin wird dorthin umgeleitet). Die Login-Seite selbst ist oeffentlich, alle Admin-API-Daten und Aktionen erfordern den Key im Authorization-Header. Kein Key in der URL, kein localStorage, keine Drittanbieter-Skripte. Key bleibt nur im Seitenspeicher bis Abmeldung/Neuladen. Abmelden loescht lokale Formularwerte. Konfigurationsansicht zeigt nur, ob Passwoerter/Tokens gesetzt sind, nicht deren Werte.
+- `PROVIDER_ENCRYPTION_KEY`: separater dauerhafter Fernet-Schlüssel, weder MCP-Key noch Webpasswort.
+- `PROVIDER_DB_PATH`: im Compose-Beispiel `/data/providers.sqlite3`.
+- `SMTP_TRUSTED_PRIVATE_HOSTS`: optionale kommagetrennte Freigabe privater SMTP-Hostnamen; standardmäßig leer.
 
-Versand ist zweistufig: Vorschau erstellen -> unveraenderte Vorschau bestaetigen. Entwurf ist 10 Minuten gueltig und einmalig; Aenderungen im Formular verlangen neue Vorschau. Moduswechsel invalidiert den Entwurf. Maximal 100 offene Webentwuerfe, nur im RAM.
+Schlüssel lokal mit installierten Abhängigkeiten erzeugen:
 
-## Telegram-Administration
+```bash
+python -c "from cryptography.fernet import Fernet; print(Fernet.generate_key().decode())"
+```
 
-Long Polling laeuft im selben Container und benoetigt keinen eingehenden Telegram-Port. Nur private Chats freigegebener Benutzer. Bestehender Webhook muss vorab entfernt sein; der Dienst loescht ihn nicht automatisch. Pro Bot nur einen Poller starten. Alte wartende Updates werden beim Start uebersprungen.
+Nicht ins Repository oder in den Chat kopieren; separat sicher verwahren und nicht bei jedem Neustart neu erzeugen. Ohne Schlüssel bleibt die Profilverwaltung gesperrt, alte ENV-Nutzung verfügbar. Bei gesetztem, falschem Schlüssel oder defektem Speicher werden implizite Profilaufrufe abgelehnt statt auf einen anderen Anbieter auszuweichen.
 
-| Befehl | Funktion |
-|---|---|
-| /admin oder /start | Inline-Adminmenue |
-| /status oder /config | Modus, Transport, Konfiguration ohne Secrets, Pollerstatus |
-| /dryrun | Testmodus fuer MCP, Web und Telegram einschalten; bis Neustart |
-| /mail Betreff gefolgt von neuer Zeile und Mailtext | Entwurf an MAIL_TO |
-| /send CODE | Entwurf innerhalb 10 Minuten bestaetigen |
-| /cancel | Eigenen Entwurf verwerfen |
-| /help | Hilfe und Menue |
+Neues Image bauen und prüfen, Compose-Erweiterungen übernehmen, Schlüssel setzen, Volume bereitstellen und Container neu erstellen. Einstieg bleibt `service.py`. Zunächst `DRY_RUN=true` nutzen. Live erst bewusst in Portainer mit `DRY_RUN=false` und Containerneuerstellung aktivieren. Repository-Push ist kein Deployment.
 
-Keine eigene KI-Textinterpretation im Bot. Bei langen Mails ist die Telegram-Vorschau gekuerzt. Entwuerfe gehen beim Neustart verloren. Passwoerter und Tokens nicht in Telegram-Nachrichten eingeben.
+`/data` wird im Image für UID 10001 mit Modus 0700 angelegt. Frische benannte Volumes übernehmen die Verzeichnisvorgaben; vorhandene Volumes/Bind-Mounts brauchen passende Schreibrechte für UID 10001. Non-root, read-only Root-Dateisystem und `highfishNetwork` bleiben erhalten.
 
-## MCP-Anbindung
+Für eine einfache konsistente Sicherung Container stoppen, Datenvolume und separaten Schlüssel sichern. Gemeinsam mit demselben Schlüssel und passenden Rechten wiederherstellen. Falsche Schlüssel überschreiben keine bestehende Datenbank. Volume nicht mit `down -v` löschen. Keine automatische Schlüsselrotation oder Profil-Löschung; Deaktivieren ist möglich, beim Standard erst einen anderen wählen.
 
-Streamable HTTP: http://SERVER-IP:8095/mcp
+## Verbindungstest
 
-Authorization: Bearer DEIN_MCP_TOKEN
+SMTP-Prüfung baut verifiziertes TLS auf und meldet sich an, sendet aber keine Mail. API-Prüfung testet ausschließlich TLS-Erreichbarkeit des fest eingebauten HTTPS-Servers, NICHT API-Key, Domain oder Versandberechtigung. Explizite Prüfungen können auch im Dry-run Netzwerkzugriffe ausführen. Eine echte Testmail erfolgt nur über Empfänger, Vorschau und Bestätigung und wird im Dry-run nicht zugestellt.
 
-Der Client muss benutzerdefinierte Authorization-Header unterstuetzen; kein OAuth. Vor echtem MCP-Versand muss der Client Nutzerfreigabe fuer Empfaenger und Inhalt einholen. Anders als Web/Telegram hat MCP keinen serverseitigen Entwurfsfreigabe-Schritt.
+Profil-SMTP erlaubt nur verifiziertes STARTTLS oder direktes TLS, prüft DNS-Adressen und bindet die Verbindung an eine geprüfte IP bei Zertifikatsprüfung gegen den ursprünglichen Hostnamen. Private SMTP-Ziele benötigen ausdrückliche Hostfreigabe. Loopback, Link-local/Metadatenziele, Multicast und nicht spezifizierte Ziele bleiben gesperrt. DNS folgt OS-Resolver-Timeouts. Alte ENV-Versandfunktionen behalten ihr bisheriges Verhalten. Beliebige zusätzliche HTTP-APIs benötigen einen eigenen Adapter.
 
-## Sicherheit und Grenzen
+## LAN-Hostfreigabe
 
-Kein Proxy erforderlich, aber HTTP verschluesselt weder Key noch Mailinhalt! Key-Authentifizierung ersetzt kein TLS. Direkten unverschluesselten Zugriff auf vertrauenswuerdiges LAN/VPN begrenzen, nicht ungeschuetzt im Internet betreiben. Dieses Projekt implementiert noch kein direktes HTTPS. SMTP nutzt STARTTLS, MailerSend-API und Telegram ausgehend HTTPS.
+```env
+MCP_ALLOWED_HOSTS=192.168.178.8:8095,localhost:*,127.0.0.1:*,[::1]:*
+```
 
-Non-root-Container, read-only Dateisystem, entfernte Linux-Capabilities. Kein allgemeines Rate-Limit und keine persistente Deduplizierung. accepted bedeutet Provider-Annahme, nicht Postfachzustellung. Bei Fehler/Timeout kann der Versandstatus unklar bleiben: Provider pruefen, nicht blind erneut senden.
+Host:Port ohne Schema/Pfad, kommagetrennt. Browser-MCP-Origin separat über `MCP_ALLOWED_ORIGINS=http://192.168.178.8:8095` erlauben, falls benötigt. Danach Container neu erstellen; Schutz nicht pauschal abschalten.
 
-GET /health meldet nur HTTP-Liveness, keine SMTP-Zugangsdatenpruefung. Adminstatus zeigt Telegram-Pollerzustand, keine Garantie fuer Zustellbarkeit. Keine Mailhistorie oder Mailtexte in persistenter Datenbank.
+## Prüfung und Grenzen
 
-## Tests
-
+```bash
 pip install -r requirements.txt
-
 python -m unittest -v
+```
 
-Tests umfassen MCP-Dry-run, Auth, Eingabepruefung, SMTP-Mocks, MCP initialize/list/call sowie Web-Admin-Auth, Empfaengerpruefung, Vorschau, einmalige Freigabe und Moduswechsel. Telegram-Menue und Browser muessen zusaetzlich in der Zielumgebung getestet werden. Ein Commit bedeutet noch keinen erfolgreichen CI-Build oder echten Versandtest. Abhaengigkeiten sind versionsbegrenzt, noch nicht gelockt.
+29 isolierte Provider-Komponententests wurden erfolgreich ausgeführt. Vollständige bestehende Anwendungstests, Auth-/CSRF-Integration, MCP-Schema, Browser, Docker-Build und GitHub Actions sind dadurch NICHT verifiziert. Details: [IMPLEMENTATION_STATUS.md](IMPLEMENTATION_STATUS.md). Keine echten Mail-/Telegram-Sends für diese Implementierung. `/health` prüft Liveness, nicht Versandberechtigungen.
+
+Telegram-Administration und einmaliger Startstatusversuch je freigegebenem Nutzer bleiben unverändert. Der alte Telegram-Maildialog hat kein explizites Empfängerfeld und ist deshalb kein vollständiger Versandweg; dafür Web oder MCP nutzen. Kein automatischer Mailversand beim Start.
+
+Ältere Detaildokumentation bleibt als Kontext erhalten; bei Abweichungen zu Anbieterprofilen, Persistenz und Auswahlregeln gilt diese README. Keine Arbeit an Copilot oder andere Coding-Agents delegieren.

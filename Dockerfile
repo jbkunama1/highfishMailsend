@@ -3,7 +3,8 @@ ENV PYTHONDONTWRITEBYTECODE=1 PYTHONUNBUFFERED=1
 WORKDIR /app
 COPY requirements.txt .
 RUN pip install --no-cache-dir -r requirements.txt && useradd --uid 10001 --create-home app
-COPY app.py runner.py admin.py admin.html web_access.py service.py ./
+COPY app.py runner.py admin.py admin.html web_access.py service.py providers.py provider_delivery.py provider_mail.py ./
+RUN mkdir -p /data && chown 10001:10001 /data && chmod 0700 /data
 USER 10001
 EXPOSE 8000
 HEALTHCHECK --interval=30s --timeout=5s --start-period=15s CMD python -c "import urllib.request; urllib.request.urlopen('http://127.0.0.1:8000/health', timeout=3)"
